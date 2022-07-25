@@ -1,5 +1,7 @@
+
+
 def scan_type
- def target
+ def host
  def SendEmailNotification(String result) {
   
     // config 
@@ -15,7 +17,7 @@ def scan_type
     if(to != null && !to.isEmpty()) {
         env.ForEmailPlugin = env.WORKSPACE
         emailext mimeType: 'text/html',
-        body: '${FILE, path="/var/lib/jenkins/workspace/demo-cloud-backend/report.html"}',
+        body: '${FILE, path="/var/lib/jenkins/workspace/zap-email/report.html"}',
         subject: currentBuild.currentResult + " : " + env.JOB_NAME,
         to: to, attachLog: true
     }
@@ -27,11 +29,6 @@ def scan_type
          	choice  choices: ["Baseline", "APIS", "Full"],
                  	description: 'Type of scan that is going to perform inside the container',
                  	name: 'SCAN_TYPE'
-		
-		string defaultValue: "",
-                 description: 'Target URL to scan',
-                 name: 'TARGET'
- 
 		booleanParam defaultValue: true,
                  	description: 'Parameter to know if wanna generate report.',
                  	name: 'GENERATE_REPORT'
@@ -69,7 +66,6 @@ def scan_type
 	    stage('Build Docker Image') {
 		    steps {
 			    sh 'whoami'
-			    sh 'sudo chmod 666 /var/run/docker.sock'
 			    script {
 				    myimage = docker.build("fazilniveus/devops:${env.BUILD_ID}")
 			    }
@@ -99,7 +95,6 @@ def scan_type
 				step([$class: 'KubernetesEngineBuilder', projectId: env.PROJECT_ID, clusterName: env.CLUSTER_NAME, location: env.LOCATION, manifestPattern: 'deployment.yaml', credentialsId: env.CREDENTIALS_ID, verifyDeployments: true])
 			    	echo "Deployment Finished ..."
 			    sh '''
-
 			    '''
 			    
 		    }
@@ -117,7 +112,7 @@ def scan_type
 			    docker run -dt --name owasp \
     			    owasp/zap2docker-stable \
     			    /bin/bash
-			   
+			    
 			    
 			    echo "Creating Workspace Inside Docker"
 			    docker exec owasp \
@@ -128,10 +123,26 @@ def scan_type
 	    stage('Scanning target on owasp container') {
              steps {
                  script {
-		     	 
+		     sh 'sleep 10'
+			sh 'gcloud container clusters get-credentials jenkins-jen-cluster --zone asia-south1-a --project tech-rnd-project'
+			sh 'kubectl get pods'	
+			sh 'kubectl get service myapp > intake.txt'
+			sh """
+			
+				awk '{print \$4}' intake.txt > extract.txt
+                        """
+			IP = sh (
+        			script: 'grep -Eo "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)" extract.txt > finalout.txt && ip=$(cat finalout.txt) && aa="http://${ip}" && echo $aa',
+        			returnStdout: true
+    			).trim()
+    			echo "Git committer email: ${IP}"
+		 
+	      
+	    	     
+			 
                        scan_type = "${params.SCAN_TYPE}"
                        echo "----> scan_type: $scan_type"
-			target = "${params.TARGET}"
+			 
 			
 		       
 			 
@@ -139,60 +150,40 @@ def scan_type
                            sh """
                                docker exec owasp \
                                zap-baseline.py \
-                               -t $target \
+                               -t ${IP} \
                                -r report.html \
                                -I
-			       
-			       docker cp owasp:/zap/wrk/report.html ${WORKSPACE}/report.html
-			    """
-			       SendEmailNotification("SUCCESSFUL")
-			   sh """
-			       
-			       docker stop owasp
-			       docker rm owasp
                            """
                        }
                        else if(scan_type == "APIS"){
-			  
                            sh """
                                docker exec owasp \
                                zap-api-scan.py \
-                               -t $target \
-			       -f openapi \
+                               -t ${IP}\
                                -r report.html \
                                -I
-			       
-			       docker cp owasp:/zap/wrk/report.html ${WORKSPACE}/report.html
-			    """
-			       SendEmailNotification("SUCCESSFUL")
-			    sh """
-			       
-			       docker stop owasp
-			       docker rm owasp
                            """
                        }
                        else if(scan_type == "Full"){
                            sh """
                                docker exec owasp \
                                zap-full-scan.py \
-                               -t $target \
-                               -r report.html \
+                               -t ${IP}\
+                               //-x report.html
                                -I
-			       
-			       docker cp owasp:/zap/wrk/report.html ${WORKSPACE}/report.html
-			    """
-			       SendEmailNotification("SUCCESSFUL")
-			    sh """
-			       
-			       
-			       docker stop owasp
-			       docker rm owasp
                             """
                            //-x report-$(date +%d-%b-%Y).xml
                        }
                        else{
                            echo "Something went wrong..."
                        }
+			sh '''
+				docker cp owasp:/zap/wrk/report.html ${WORKSPACE}/report.html
+				echo ${WORKSPACE}
+				docker stop owasp
+                     	docker rm owasp
+			'''
+			SendEmailNotification("SUCCESSFUL")
 				    
 		  }
 	     }
@@ -200,4 +191,3 @@ def scan_type
 
     }
  }
-
